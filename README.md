@@ -5,7 +5,4 @@ Jupyter notebook for Analytics and Rmd file for Forecasting.
 
 The summary page includes my finding and insights of the sales data.
 
-Due to NDA I am able to share data. But the format is Categories by Date.
-                                 Date1 Date2 Date3...
-Category1  Category2 Category3
-   a          d         z          xx     xx   xx
+Due to NDA I am able to share data. The data format is Categories by Date, with different Categories being y axis and different Dates being x axis
