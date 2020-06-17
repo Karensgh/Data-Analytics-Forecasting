@@ -1,0 +1,160 @@
+---
+title: "Forecasting"
+author: "Karen Chen"
+date: "6/15/2020"
+output: html_notebook
+---
+```{r}
+library(dplyr)
+library(tidyr)
+library(lubridate)
+library(ggplot2)
+library(TSA)
+library(TSstudio)
+library(Metrics)
+library(zoo)
+```
+
+```{r}
+d <- read.csv('~/Desktop/Interview/Logitech/Data Challenge/use_case', stringsAsFactors = F)
+
+d2 <- d %>%
+  gather(
+    Date, Sales, -Category1, -Category2, -Category3
+  )%>%
+  mutate(
+    Month = substr(Date, 5, 7),
+    Year = substr(Date, 2, 3),
+    Day = 1,
+    Date2 = mdy(paste(Month, Day, Year)),
+    Month = month(Date2, label=T)
+  )%>%
+  filter(
+    Year >= 13,
+    Date2 < '2016-09-01'
+  )
+
+total_sales <- d2 %>%
+  group_by(
+    Category1, Date2
+  ) %>%
+  summarise(
+    tot_sales = sum(Sales)
+  )
+```
+
+```{r}
+ts_sales <- d2 %>%
+  filter(Category1=='A',
+         Category2=='A',
+         Category3=='M') %>%
+  group_by(
+     Date2
+  ) %>%
+  summarise(
+    tot_sales = sum(Sales))
+  
+```
+
+## Time Series Forcasting
+```{r}
+sales<-ts(ts_sales$tot_sales,frequency=12,start=c(2013,01,01))
+split_sales <- ts_split(ts.obj = sales, sample.out = 6)
+training <- split_sales$train
+testing <- split_sales$test
+sales<-training
+plot(sales,type='l',cex=0.75,xlab='Date')
+points(y=sales,x=time(sales),pch=as.vector(season(sales)))
+```
+
+*The time series plot suggests that this process is not stationary.It has standard variance. No outliers.*
+```{r}
+#Box Cox Transformation
+BoxCox.ar(sales)
+```
+
+*It turns out that there is no need for transformation since the confidence interval for lambda contains 1.*
+```{r}
+par(mfrow=c(2,2))
+plot(sales,xlab="Date",type="o")
+acf(sales,lag.max = 50)
+plot(diff(sales),ylab="First differences",xlab="Date",type="o")
+acf(diff(sales),lag.max = 50)
+```
+
+```{r}
+par(mfrow=c(1,2))
+acf(diff(sales),lag.max = 70)
+pacf(diff(sales),lag.max = 70)
+```
+
+*Here are some models I can start trying based on ACF plot and PACF plot.*
+*SARMA model:(0,0,2), (1,0,0), (1,0,1), (1,0,0), (0,0,1).*
+*ARIMA model:(2,1,0), (0,1,3), (2,1,3).*
+
+*By increasing and decreasing components based on performances of the models, here are four good models I ended up with.*
+```{r}
+# Fit arima(0,1,1) * arma(1,0,0)_{12}
+sales.arma01.arma10 = arima(sales,order=c(0,1,1),method='ML',seasonal=list(order=c(1,0,0),period=12))
+sales.arma01.arma10
+```
+
+```{r}
+# Fit arima(2,1,3) * arma(1,0,0)_{12}
+sales.arma23.arma10 = arima(sales,order=c(2,1,3),method='ML',seasonal=list(order=c(1,0,0),period=12))
+sales.arma23.arma10
+```
+```{r}
+# Fit arima(2,1,0) * arma(0,0,2)_{12}
+sales.arma20.arma02 = arima(sales,order=c(2,1,0),method='ML',seasonal=list(order=c(0,0,2),period=12))
+sales.arma20.arma02
+```
+
+```{r}
+# Fit arima(0,1,0) * arma(1,0,0)_{12}
+sales.arma00.arma10 = arima(sales,order=c(0,1,0),method='ML',seasonal=list(order=c(1,0,0),period=12))
+sales.arma00.arma10
+```
+
+```{r}
+# Model Diagnosis
+par(mfrow=c(1,2))
+hist(rstandard(sales.arma01.arma10),xlab="Standardised residuals")
+qqnorm(rstandard(sales.arma01.arma10)) 
+qqline(rstandard(sales.arma01.arma10))
+```
+```{r}
+# Shapiro-Wilk and runs tests
+shapiro.test(rstandard(sales.arma01.arma10))
+```
+
+```{r}
+runs(rstandard(sales.arma01.arma10))
+```
+*The histogram and qq plot of the standardized residuals in generally supports the normality assumption. In addition, when further examining the standardized residuals from the model fit, the Shapiro-Wilk test does not reject normality (p-value = 0.3143) and the runs test does not reject independence (p-value = 0.625).*
+
+```{r}
+tsdiag(sales.arma01.arma10,gof=30,omit.initial=TRUE)
+```
+*The Ljung-Box pvalues do not suggest lack of fit. Therefore I decided to go with sales.arma01.arma10 model.*
+
+```{r}
+# Forcasting
+sales.arma01.arma10.predict <- predict(sales.arma01.arma10,n.ahead=18) 
+round(sales.arma01.arma10.predict$pred,3)
+```
+
+```{r}
+lower.pi<-sales.arma01.arma10.predict$pred-qnorm(0.975,0,1)*sales.arma01.arma10.predict$se 
+upper.pi<-sales.arma01.arma10.predict$pred+qnorm(0.975,0,1)*sales.arma01.arma10.predict$se 
+data.frame(lower.pi,upper.pi)
+```
+```{r}
+plot(sales.arma01.arma10,n.ahead=12,col='red',type='b',pch=16,n1=c(2013,1),ylab="Sales",xlab="Year",main='C1/A C2/A C3/M')
+points(y=testing,x=time(testing))
+```
+```{r}
+col_names <- as.yearmon(time(sales.arma01.arma10.predict$pred)) 
+predictions <-data.frame(col_names, sales.arma01.arma10.predict$pred)
+write.csv(predictions,'Forecasted data.csv')
+```
